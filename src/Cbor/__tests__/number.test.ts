@@ -1,5 +1,5 @@
 import Cbor from ".."
-import CborString from "../CborString";
+import CborString from "../../types/HexString/CborString";
 
 
 test("one bytes unsigned parsed normally", () =>

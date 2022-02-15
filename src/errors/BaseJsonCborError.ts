@@ -1,5 +1,5 @@
 
-export default class CborError extends Error
+export default class BaseJsonCborError extends Error
 {
     constructor( msg: string )
     {

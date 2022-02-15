@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import HexError from "../../errors/BaseOffchainError/UtilsErrors/HexError";
+import HexError from "../../errors/TypesError/HexError";
 
 export default class HexString
 {

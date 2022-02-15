@@ -1,8 +1,8 @@
 import BufferUtils from "../../utils/BufferUtils";
-import CborError from "../errors/CborError";
+import CborError from "../errors/JsonCborError.ts/CborError";
 import JsonCbor, { RawJsonCborMap, RawJsonCborValue } from "../JsonCbor";
 import UInt64 from "../types/UInt64";
-import CborString from "./CborString";
+import CborString from "../types/HexString/CborString";
 import CborConstants, { AdditionalInformation, MajorType } from "./Constants";
 
 
@@ -227,7 +227,6 @@ export default class Cbor {
                     
                 break;
                 case MajorType.array:
-                    console.log("enterd array parsing")
                     const parsedArr = Cbor._parseArr( bytes );
 
                     return {
@@ -676,7 +675,6 @@ export default class Cbor {
             headerTotLen: number
         }
     {
-        console.log("entered private array method")
         if (!Buffer.isBuffer(bytes)) throw new CborError("trying to parse an array with a non Buffer input");
 
         let byte_ptr: number = 0;
@@ -989,37 +987,23 @@ export default class Cbor {
 
                 while( bytes.readUInt8( byte_ptr ) !== Cbor.Constants.infinite_break )
                 {
-                    console.log("current map: ", map);
-
-                    console.log( "going to parse byte key: " + BufferUtils.copy(
-                        bytes.slice( byte_ptr )
-                    ).toString("hex"));
-
                     const parsedKey = Cbor._parse(
                         BufferUtils.copy(
                             bytes.slice( byte_ptr )
                         )
                     )
 
-                    console.log("parsed key: ", parsedKey.parsed );
-                    
                     totHeadersLen += parsedKey.headers_tot_len;
                     totMsgLen += parsedKey.msg_len;
     
                     byte_ptr += parsedKey.headers_tot_len + parsedKey.msg_len;
                     
-                    console.log( "going to parse byte value: " + BufferUtils.copy(
-                        bytes.slice( byte_ptr )
-                    ).toString("hex"));
-    
                     const parsedValue = Cbor._parse(
                         BufferUtils.copy(
                             bytes.slice( byte_ptr )
                         )
                     );
     
-                    console.log("parsed valeu: ", parsedValue.parsed );
-
                     totHeadersLen += parsedValue.headers_tot_len;
                     totMsgLen += parsedValue.msg_len;
     

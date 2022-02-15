@@ -1,6 +1,6 @@
 import JsonCborError from ".";
 
-export default class JsonCborTxError extends JsonCborError
+export default class CborError extends JsonCborError
 {
     constructor( msg: string )
     {

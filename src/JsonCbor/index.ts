@@ -2,14 +2,14 @@ import ISerializable from "../interfaces/ISerializable";
 import IJsonValueConvertible from "../interfaces/JsonInterfaces/IJsonValueConvertible";
 import RawJsonValue from "../interfaces/JsonInterfaces/RawJsonValue";
 
-import PlutusDataAndCborCommons from "../../utils/PlutusDataAndCborCommons";
-import HexString from "../../utils/Hex/HexString";
+import HexString from "../types/HexString";
 import ObjectUtils from "../../utils/ObjectUtils";
 
-import JsonCborError from "../SerializableError/JsonCborError";
-
-import shouldNeverGetHereError from "../../utils/errorCreation/shouldNeverGetHereError";
-import makeConstructionError from "../../utils/errorCreation/makeConstructionError";
+import JsonCborError from "../errors/JsonCborError.ts";
+import makeConstructionError from "../../utils/error_creation/makeConstructionError";
+import shouldNeverGetHereError from "../../utils/error_creation/shouldNeverGetHereError";
+import Cbor from "../Cbor";
+import CborString from "../types/HexString/CborString";
 
 export type JsonCborKey = 
 "string"    |
@@ -18,6 +18,23 @@ export type JsonCborKey =
 "int"       |
 "bytes"
 ;
+
+export type JsonCborValue =
+    JsonCborMap     |
+    JsonCborList    |
+    JsonCborString  |
+    JsonCborInt     |
+    JsonCborBytes
+;
+
+export type RawJsonCborValue =
+    RawJsonCborMap      |
+    RawJsonCborList     |
+    RawJsonCborString   |
+    RawJsonCborInt      |
+    RawJsonCborBytes
+;
+
 
 export default
 class JsonCbor 
@@ -56,6 +73,11 @@ class JsonCbor
 
             default: throw shouldNeverGetHereError<JsonCborError>( "JSonCbor.toRawObject" );
         }
+    }
+
+    static fromCbor( cbor : CborString | string | Buffer ): JsonCbor
+    {
+        return Cbor.parse( cbor );
     }
 
     toJsonValue(): RawJsonValue
@@ -117,22 +139,6 @@ class JsonCbor
 
 }
 
-export type JsonCborValue =
-    JsonCborMap     |
-    JsonCborList    |
-    JsonCborString  |
-    JsonCborInt     |
-    JsonCborBytes
-;
-
-export type RawJsonCborValue =
-    RawJsonCborMap      |
-    RawJsonCborList     |
-    RawJsonCborString   |
-    RawJsonCborInt      |
-    RawJsonCborBytes
-;
-
 interface RawJsonCborMapPair
 {
     k: RawJsonCborValue, v: RawJsonCborValue
@@ -141,6 +147,7 @@ export interface RawJsonCborMap
 {
     map: RawJsonCborMapPair[]
 }
+
 export class JsonCborMap
     implements IJsonValueConvertible, ISerializable
 {
@@ -234,10 +241,12 @@ export class JsonCborMap
 
 }
 
+
 export interface RawJsonCborList
 {
     list: RawJsonCborValue[]
 }
+
 export class JsonCborList
     implements IJsonValueConvertible, ISerializable
 {
@@ -310,6 +319,7 @@ export interface RawJsonCborString
 {
     string: string // less than 64 char ???
 }
+
 export class JsonCborString
     implements IJsonValueConvertible, ISerializable
 {
@@ -356,6 +366,7 @@ export interface RawJsonCborInt
 {
     int: number | bigint
 }
+
 export class JsonCborInt
     implements IJsonValueConvertible, ISerializable
 {
@@ -371,9 +382,24 @@ export class JsonCborInt
         this._rawInt = jsonCborInt;
     }
 
-    static isValid = PlutusDataAndCborCommons.Int.isValid;
+    static isValid( obj: { int: number | BigInt } ): boolean
+    {
+        return (
+            ObjectUtils.isObject( obj ) &&
+            ObjectUtils.hasUniqueKey( obj, "int" ) &&
+            JsonCborInt.isValidValue( obj["int"] )
+        );
+    }
 
-    static isValidValue = PlutusDataAndCborCommons.Int.isValidValue;
+    static isValidValue( any: number | BigInt ): boolean
+    {
+        if( typeof any === "bigint" ) return true;
+        if( typeof any !== "number" ) return false;
+
+        return (
+            Math.round( any ) === any
+        );
+    }
 
     toJsonValue(): number | string
     {
@@ -399,6 +425,7 @@ interface private_RawJsonCborBytes
 {
     bytes: HexString
 }
+
 export interface RawJsonCborBytes
 {
     bytes: string
@@ -420,9 +447,26 @@ export class JsonCborBytes
         };
     }
 
-    static isValid = PlutusDataAndCborCommons.Bytes.isValid;
+    static isValid( obj: RawJsonCborBytes ): boolean
+    {
+        return (
+            ObjectUtils.isObject( obj ) &&
+            ObjectUtils.hasUniqueKey( obj, "bytes" ) &&
+            JsonCborBytes.isValidValue( obj["bytes"] )
+        )
+    }
 
-    static isValidValue = PlutusDataAndCborCommons.Bytes.isValidValue;
+    static isValidValue( bytes: string | Buffer ): boolean
+    {
+        if( Buffer.isBuffer( bytes ) ) return true;
+
+        if( typeof bytes !== "string" ) return false;
+
+        return(
+            HexString.isHex( bytes ) ||
+            (HexString.isHex( bytes.slice(2) ) && bytes.slice( 0, 2 ) == "0x" )
+        )
+    }
 
     toJsonValue(): string
     {
@@ -435,6 +479,4 @@ export class JsonCborBytes
             bytes: this._rawBytes.bytes.asString
         };
     }
-
-    
 }

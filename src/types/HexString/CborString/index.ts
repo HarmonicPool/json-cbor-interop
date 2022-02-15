@@ -1,5 +1,4 @@
-import HexString from "../../../utils/Hex/HexString";
-
+import HexString from "..";
 
 export default
 class CborString

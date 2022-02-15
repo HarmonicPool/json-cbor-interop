@@ -53,6 +53,45 @@ export default class ObjectUtils
         return true
     }
 
+
+    static isSerializable( obj: object ): boolean
+    {
+        const keys = Object.keys( obj );
+
+        for( let i = 0; i < keys.length; i++)
+        {
+            const value = ( obj as any )[keys[i]];
+
+            if(
+                typeof value === "number" ||
+                typeof value === "bigint" ||
+                typeof value === "boolean" ||
+                typeof value === "string" ||
+                typeof value === "undefined"
+            ) continue; // this single value is true, don't know the others
+            else
+            {
+                if( Array.isArray( value ) )
+                {
+                    for( let i = 0; i < value.length; i++ )
+                    {
+                        // all array elements must be serilalizable to
+                        // equivalent to AND all elments
+                        if( !ObjectUtils.isSerializable( value[i] ) ) return false;
+                    }
+                }
+                else if ( typeof value === "object" )
+                {
+                    if( !ObjectUtils.isSerializable( value ) ) continue; // this single value is true, don't know the others
+                    else return false;
+                }
+                else if( typeof value === "function" ) return false;
+            }
+        }
+
+        return true;
+    }
+
     static deepEqual( a: any , b: any ): boolean
     {
         if( typeof a !== typeof b )
@@ -150,9 +189,9 @@ export default class ObjectUtils
         return false;
     }
     
-    static deepClone<T = any>( obj: T ): T
+    static deepClone<T extends any = any>( obj: T ): T
     {
-        let clone: T;
+        let clone : any;
 
         //@ts-ignore
         if( typeof obj === "function" ) return cloneFunc( obj ); 
@@ -161,6 +200,8 @@ export default class ObjectUtils
         {
             if( Array.isArray( obj ) )
             {
+                clone = []
+
                 for( let i = 0; i < obj.length; i++)
                 {
                     clone[i] = ObjectUtils.deepClone(obj[i]);
@@ -169,11 +210,11 @@ export default class ObjectUtils
                 return clone;
             }
 
-            const objKeys = Object.keys( obj );
+            const objKeys = Object.keys( obj as object );
 
             for( let i = 0 ; i < objKeys.length; i++ )
             {
-                clone[ objKeys[i] ] = ObjectUtils.deepClone( obj[ objKeys[i] ] );
+                clone[ objKeys[i] ] = ObjectUtils.deepClone( (obj as any)[ objKeys[i] ] );
             }
 
             return clone;
@@ -195,10 +236,12 @@ function cloneFunc( func: Function ): Function
         //@ts-ignore
         cloneObj = func.__clonedFrom;
     }
-
+    
+    //@ts-ignore
     let temp = function() { return cloneObj.apply(this, arguments); };
 
     for(let key in func) {
+        //@ts-ignore
         temp[key] = func[key];
     }
 

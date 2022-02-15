@@ -1,8 +1,4 @@
-import JsonCbor, { JsonCborMap } from ".."
-
-jest.mock("@emurgo/cardano-serialization-lib-asmjs/cardano_serialization_lib.asm.js",() => jest.fn());
-jest.mock("@emurgo/cardano-serialization-lib-asmjs",() => jest.fn());
-
+import { JsonCborMap } from ".."
 
 test("map json works", () => {
 

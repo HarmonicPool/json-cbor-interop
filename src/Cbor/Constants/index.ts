@@ -1,6 +1,4 @@
 
-
-
 export enum MajorType {
     unsigned = 0,   // 000x_xxxx // 
     negative = 1,   // 001x_xxxx // 
