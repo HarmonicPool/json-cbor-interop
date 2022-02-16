@@ -1,10 +1,18 @@
 import BufferUtils from "../../utils/BufferUtils";
 import CborError from "../errors/JsonCborError.ts/CborError";
-import JsonCbor, { RawJsonCborMap, RawJsonCborValue } from "../JsonCbor";
+import JsonCbor, { JsonCborKey, RawJsonCborBytes, RawJsonCborInt, RawJsonCborList, RawJsonCborMap, RawJsonCborString, RawJsonCborValue } from "../JsonCbor";
 import UInt64 from "../types/UInt64";
 import CborString from "../types/HexString/CborString";
-import CborConstants, { AdditionalInformation, MajorType } from "./Constants";
+import CborConstants, { AdditionalInformation, MajorType, MajorTypeAsUint8 } from "./Constants";
+import ObjectUtils from "../../utils/ObjectUtils";
+import shouldNeverGetHereError from "../../utils/error_creation/shouldNeverGetHereError";
 
+
+interface SubParsedJson
+{
+    parsedCbor: string,
+    totLength: number | UInt64
+}
 
 interface RawMapPair{
     k: RawJsonCborValue,
@@ -13,7 +21,8 @@ interface RawMapPair{
 /**
  * @static
  */
-export default class Cbor {
+export default class Cbor
+{    
     private constructor() { };
 
     static Constants = CborConstants;
@@ -33,6 +42,266 @@ export default class Cbor {
         // 0000_0000 0000_0000 0000_0000 0001_1111 // 31 // unsigned base 10
         return (n & Cbor.Constants.AdditionalInfosMask);
     }
+
+    static fromJsonCbor( jsonCbor: JsonCbor | RawJsonCborValue ): CborString
+    {
+        const rawJson = jsonCbor instanceof JsonCbor ? jsonCbor.toRawObject() : jsonCbor;
+
+        if( !ObjectUtils.hasUniqueKey( rawJson ) )
+        {
+            throw shouldNeverGetHereError<CborError>( "Cbor.fromJsonCbor" );
+        }
+
+        switch( Object.keys( rawJson )[0] as JsonCborKey )
+        {
+            case "bytes":
+                return Cbor._fromJsonCbor_handleHeader(
+                    MajorTypeAsUint8.bytes,
+                    Cbor._fromJsonCbor_bytes(
+                        rawJson as RawJsonCborBytes
+                    )
+                );
+            break;
+            case "int":
+                // numbers maight be contained in the header itself
+                // Cbor._fromJsonCbor_int act as amodified version of Cbor._fromJsonCbor_handleHeader
+
+                // handles both unsigned and negative cases
+                // TEST test totest toTest @test negative case (- negative + 1)
+                return Cbor._fromJsonCbor_int(
+                    rawJson as RawJsonCborInt
+                );
+            break;
+            case "string":
+                return Cbor._fromJsonCbor_handleHeader(
+                    MajorTypeAsUint8.text,
+                    Cbor._fromJsonCbor_string(
+                        rawJson as RawJsonCborString
+                    )
+                );
+            break;
+            case "list":
+                return Cbor._fromJsonCbor_handleHeader(
+                    MajorTypeAsUint8.array,
+                    Cbor._fromJsonCbor_list(
+                        rawJson as RawJsonCborList
+                    )
+                );
+            break;
+            case "map":
+                return Cbor._fromJsonCbor_handleHeader(
+                    MajorTypeAsUint8.map,
+                    Cbor._fromJsonCbor_map(
+                        rawJson as RawJsonCborMap
+                    )
+                );
+            break;
+            
+            default:
+                throw shouldNeverGetHereError<CborError>( "Cbor.fromJsonCbor" );
+        }
+    }
+
+    static _fromJsonCbor_handleHeader( major_t: MajorTypeAsUint8, subParsed: SubParsedJson ): CborString
+    {
+        const addInfo_consts = Cbor.Constants.AddInfos.Bytes;
+
+        const header = Buffer.alloc(9);
+        let headerStr: string = "";
+
+        const getHeaderStr = ( headerLen: number ): string =>
+        {
+            return BufferUtils.copy(
+                header.subarray(0,headerLen)
+            ).toString("hex");
+        }
+
+        if( typeof subParsed.totLength === "number" )
+        {
+            if( subParsed.totLength <= 23 )
+            {
+                header.writeInt8( major_t | subParsed.totLength , 0 );
+
+                headerStr = getHeaderStr( 1 );
+            }
+            else if( subParsed.totLength <= 0xff )
+            {
+                header.writeUInt8( major_t | addInfo_consts.expect_uint8_length, 0 );
+                header.writeUInt8( subParsed.totLength , 1 );
+
+                headerStr = getHeaderStr( 1 + 1 );
+            }
+            else if( subParsed.totLength <= 0xffff )
+            {
+                header.writeUInt8( major_t | addInfo_consts.expect_uint16_length, 0 );
+                header.writeUInt16BE( subParsed.totLength , 1 );
+
+                headerStr = getHeaderStr( 1 + 2 );
+            }
+            else if( subParsed.totLength <= 0xffffffff )
+            {
+                header.writeUInt8( major_t | addInfo_consts.expect_uint32_length, 0 );
+                header.writeUInt32BE( subParsed.totLength , 1 );
+
+                headerStr = getHeaderStr( 1 + 4 );
+            }
+
+            return new CborString(
+                headerStr + subParsed.parsedCbor
+            );
+        }
+
+        header.writeUInt8( major_t | addInfo_consts.expect_uint64_length, 0 );
+        header.writeBigInt64BE( subParsed.totLength.to_bigint(), 1 );
+
+        headerStr = getHeaderStr( 1 + 8 );
+
+        return new CborString(
+            headerStr + subParsed.parsedCbor
+        );
+    }
+
+    static _fromJsonCbor_bytes( bytesObj : RawJsonCborBytes ): SubParsedJson
+    {
+        if( bytesObj.bytes.length % 2 )
+        {
+            throw new CborError(
+                "unexpected bytesring length while parsing a JsonCbor to Cbor, length was: "+ 
+                bytesObj.bytes.length + " and it should be even in order to construct bytes"
+            );
+        }
+
+        return {
+            parsedCbor: bytesObj.bytes,
+            totLength: bytesObj.bytes.length / 2
+        }
+    }
+
+    static _fromJsonCbor_int( { int }: RawJsonCborInt ): CborString
+    {
+        const addInfo_consts = Cbor.Constants.AddInfos.Negative;
+
+        if(
+            typeof int === "bigint" ||
+            int instanceof UInt64
+        )
+        {
+            const buff = Buffer.alloc(9);
+            if( typeof int === "bigint" )
+            {
+                buff.writeUInt8(
+                    int >= BigInt( 0 ) ?
+                    MajorTypeAsUint8.unsigned | addInfo_consts.expect_uint64 :
+                    MajorTypeAsUint8.negative | addInfo_consts.expect_uint64
+                );
+            }
+            else // UInt64
+            {
+                buff.writeUInt8( MajorTypeAsUint8.unsigned | addInfo_consts.expect_uint64 );
+                int = int.to_bigint()
+            }
+
+            buff.writeBigUInt64BE( int );
+
+            return new CborString( buff.toString("hex") );
+        }
+
+        // if positive stays positive, if negative takes the complementar
+        // ... as in real life, be positive guys
+        const unsigned_num = int >= 0 ? int : (-int) - 1;
+
+        if( unsigned_num <= 23 )
+        {
+            const buff = Buffer.alloc(1)
+            
+            buff.writeUInt8(
+                unsigned_num >= 0 ?
+                MajorTypeAsUint8.unsigned | unsigned_num :
+                MajorTypeAsUint8.negative | unsigned_num
+            )
+            
+            return new CborString( buff.toString("hex") );
+        }
+        else if( unsigned_num <= 0xff )
+        {
+            const buff = Buffer.alloc( 1 + 1 );
+            buff.writeUInt8( 
+                unsigned_num >= 0 ?
+                MajorTypeAsUint8.unsigned | addInfo_consts.expect_uint8 :
+                MajorTypeAsUint8.negative | addInfo_consts.expect_uint8
+            );
+            buff.writeUInt8( unsigned_num , 1 );
+
+            return new CborString( buff.toString("hex") )
+        }
+        else if( unsigned_num <= 0xffff )
+        {
+            const buff = Buffer.alloc(1 + 2);
+            buff.writeUInt8( 
+                unsigned_num >= 0 ?
+                MajorTypeAsUint8.unsigned | addInfo_consts.expect_uint16 :
+                MajorTypeAsUint8.negative | addInfo_consts.expect_uint16
+            );
+            buff.writeUInt16BE( unsigned_num , 1 );
+
+            return new CborString( buff.toString("hex") )
+        }
+        else if( unsigned_num <= 0xffffffff )
+        {
+            const buff = Buffer.alloc(1 + 4);
+            buff.writeUInt8( 
+                unsigned_num >= 0 ?
+                MajorTypeAsUint8.unsigned | addInfo_consts.expect_uint32 :
+                MajorTypeAsUint8.negative | addInfo_consts.expect_uint32
+            );
+            buff.writeUInt32BE( unsigned_num , 1 );
+
+            return new CborString( buff.toString("hex") )
+        }
+
+        throw new CborError("found unsigned or negative taking more than 32 bit not being 'bigint' or UInt64 instances while parsing JsonCbor to CBOR, thrown in Cbor._fromJsonCbor_int");
+    }
+
+    static _fromJsonCbor_string( { string }: RawJsonCborString ): SubParsedJson
+    {
+        const bytes = Buffer.from( string, "utf8" );
+        return {
+            parsedCbor: bytes.toString("hex"),
+            totLength: bytes.length
+        }
+    }
+
+    static _fromJsonCbor_list( { list }: RawJsonCborList ): SubParsedJson
+    {
+        let parsedCbor: string = "";
+
+        for( let i = 0; i < list.length; i++ )
+        {
+            parsedCbor += Cbor.fromJsonCbor( list[i] ).asString;
+        }
+
+        return {
+            parsedCbor: parsedCbor,
+            totLength: list.length
+        }
+    }
+
+    static _fromJsonCbor_map( { map }: RawJsonCborMap ): SubParsedJson
+    {
+        let parsedCbor: string = "";
+
+        for( let i = 0; i < map.length; i++ )
+        {
+            parsedCbor += Cbor.fromJsonCbor( map[i].k ).asString;
+            parsedCbor += Cbor.fromJsonCbor( map[i].v ).asString;
+        }
+
+        return {
+            parsedCbor: parsedCbor,
+            totLength: map.length
+        }
+    }
+
 
     static parse(cbor: CborString | string | Buffer): JsonCbor
     {
@@ -122,7 +391,7 @@ export default class Cbor {
                             // takes the next 8 bytes and discards the rest if any
                             return {
                                 top_level_header: major_t,
-                                parsed: { int: UInt64.fromBytes( bytes,  i + 1 ).to_bigint() },
+                                parsed: { int: UInt64.fromBytes( bytes,  i + 1 ) },
                                 msg_len: 8,
                                 headers_tot_len: 1
                             };

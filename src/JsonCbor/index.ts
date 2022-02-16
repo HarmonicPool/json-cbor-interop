@@ -10,6 +10,7 @@ import makeConstructionError from "../../utils/error_creation/makeConstructionEr
 import shouldNeverGetHereError from "../../utils/error_creation/shouldNeverGetHereError";
 import Cbor from "../Cbor";
 import CborString from "../types/HexString/CborString";
+import UInt64 from "../types/UInt64";
 
 export type JsonCborKey = 
 "string"    |
@@ -78,6 +79,11 @@ class JsonCbor
     static fromCbor( cbor : CborString | string | Buffer ): JsonCbor
     {
         return Cbor.parse( cbor );
+    }
+
+    toCbor(): CborString
+    {
+        return Cbor.fromJsonCbor( this );
     }
 
     toJsonValue(): RawJsonValue
@@ -364,7 +370,7 @@ export class JsonCborString
 
 export interface RawJsonCborInt
 {
-    int: number | bigint
+    int: number | UInt64 | bigint
 }
 
 export class JsonCborInt
@@ -376,13 +382,13 @@ export class JsonCborInt
     {
         if( !JsonCborInt.isValid( jsonCborInt ) )
         {
-            throw makeConstructionError<JsonCborError>( "JsonCborInt", "{ int: number }", jsonCborInt );
+            throw makeConstructionError<JsonCborError>( "JsonCborInt", "{ int: number | Uint64 | bigint }", jsonCborInt );
         }
 
         this._rawInt = jsonCborInt;
     }
 
-    static isValid( obj: { int: number | BigInt } ): boolean
+    static isValid( obj: { int: number | UInt64 | bigint } ): boolean
     {
         return (
             ObjectUtils.isObject( obj ) &&
@@ -391,9 +397,15 @@ export class JsonCborInt
         );
     }
 
-    static isValidValue( any: number | BigInt ): boolean
+    static isValidValue( any: number | bigint | UInt64 ): boolean
     {
         if( typeof any === "bigint" ) return true;
+
+        if( typeof any === "object" )
+        {
+            return (any instanceof UInt64)
+        }
+
         if( typeof any !== "number" ) return false;
 
         return (
@@ -403,11 +415,14 @@ export class JsonCborInt
 
     toJsonValue(): number | string
     {
+        const int : number | UInt64 | bigint = this._rawInt.int
         return (
             ( 
-                typeof this._rawInt.int === "bigint" ? 
-                this._rawInt.int.toString() :
-                this._rawInt.int
+                int instanceof UInt64 ? 
+                int.to_bigint().toString() :
+                (typeof int === "bigint" ?
+                int.toString():
+                int)
             )
         );
     }
