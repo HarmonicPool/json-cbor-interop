@@ -120,7 +120,7 @@ export default class Cbor
         {
             if( subParsed.totLength <= 23 )
             {
-                header.writeInt8( major_t | subParsed.totLength , 0 );
+                header.writeUint8( major_t | subParsed.totLength , 0 );
 
                 headerStr = getHeaderStr( 1 );
             }
@@ -182,26 +182,18 @@ export default class Cbor
         const addInfo_consts = Cbor.Constants.AddInfos.Negative;
 
         if(
-            typeof int === "bigint" ||
             int instanceof UInt64
         )
         {
             const buff = Buffer.alloc(9);
-            if( typeof int === "bigint" )
-            {
-                buff.writeUInt8(
-                    int >= BigInt( 0 ) ?
-                    MajorTypeAsUint8.unsigned | addInfo_consts.expect_uint64 :
-                    MajorTypeAsUint8.negative | addInfo_consts.expect_uint64
-                );
-            }
-            else // UInt64
-            {
-                buff.writeUInt8( MajorTypeAsUint8.unsigned | addInfo_consts.expect_uint64 );
-                int = int.to_bigint()
-            }
+            
+            buff.writeUInt8( 
+                ( int.isNegative ? MajorTypeAsUint8.negative : MajorTypeAsUint8.unsigned )
+                | addInfo_consts.expect_uint64
+            );
 
-            buff.writeBigUInt64BE( int );
+            // overwrites the first too,not good
+            int.writeToBuffer( buff, 1 );
 
             return new CborString( buff.toString("hex") );
         }
@@ -215,7 +207,7 @@ export default class Cbor
             const buff = Buffer.alloc(1)
             
             buff.writeUInt8(
-                unsigned_num >= 0 ?
+                int >= 0 ?
                 MajorTypeAsUint8.unsigned | unsigned_num :
                 MajorTypeAsUint8.negative | unsigned_num
             )
@@ -451,9 +443,14 @@ export default class Cbor
                         break;
                         case neg.expect_uint64:
                             // takes the next 8 bytes and discards the rest if any
+
+                            // bytes taken "as is" and marked as negative
+                            const asNegative = UInt64.fromBytes( bytes,  i + 1 );
+                            asNegative.dangerouslySetNegativeFlag( true );
+
                             return {
                                 top_level_header: major_t,
-                                parsed: { int: (- UInt64.fromBytes( bytes,  i + 1 ).to_bigint() - BigInt(1)) },
+                                parsed: { int: asNegative },
                                 msg_len: 8,
                                 headers_tot_len: 1
                             };

@@ -76,3 +76,12 @@ test("negative uint32 parsed normaly", () =>
 
 })
 
+test("positive uint64 parsed normaly", () =>
+{
+    expect(false).toBe(true);
+});
+
+test("negative uint64 parsed normaly", () =>
+{
+    expect(false).toBe(true);
+})

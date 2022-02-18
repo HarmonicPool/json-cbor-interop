@@ -370,7 +370,7 @@ export class JsonCborString
 
 export interface RawJsonCborInt
 {
-    int: number | UInt64 | bigint
+    int: number | UInt64
 }
 
 export class JsonCborInt
@@ -382,13 +382,13 @@ export class JsonCborInt
     {
         if( !JsonCborInt.isValid( jsonCborInt ) )
         {
-            throw makeConstructionError<JsonCborError>( "JsonCborInt", "{ int: number | Uint64 | bigint }", jsonCborInt );
+            throw makeConstructionError<JsonCborError>( "JsonCborInt", "{ int: number | Uint64 }", jsonCborInt );
         }
 
         this._rawInt = jsonCborInt;
     }
 
-    static isValid( obj: { int: number | UInt64 | bigint } ): boolean
+    static isValid( obj: { int: number | UInt64 } ): boolean
     {
         return (
             ObjectUtils.isObject( obj ) &&
@@ -420,9 +420,7 @@ export class JsonCborInt
             ( 
                 int instanceof UInt64 ? 
                 int.to_bigint().toString() :
-                (typeof int === "bigint" ?
-                int.toString():
-                int)
+                int
             )
         );
     }
