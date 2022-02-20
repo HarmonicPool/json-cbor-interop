@@ -18,4 +18,9 @@ class CborString
     {
         return Cbor.fromJsonCbor( jsonCbor );
     }
+
+    toJsonCbor(): JsonCbor
+    {
+        return JsonCbor.fromCbor( this );
+    }
 }

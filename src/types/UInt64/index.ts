@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import UInt64Error from "../../errors/TypesError/UInt64Error";
+import UInt64Error from "../../misc/errors/TypesError/UInt64Error";
 
 const wouldOverflowError = new UInt64Error("can't construct an Uint64 with less than 8 bytes")
 
@@ -41,7 +41,7 @@ class UInt64
     {
         UInt64._assert_has8Bytes( buffer, offset );
 
-        buffer.writeUInt32BE( this._bytes.readUInt32BE( offset ), offset );
+        buffer.writeUInt32BE( this._bytes.readUInt32BE(), offset );
         buffer.writeUInt32BE( this._bytes.readUInt32BE( 4 ), offset + 4 );
     }
 
@@ -177,6 +177,11 @@ class UInt64
         return ( uint64.to_bigint() <= BigInt( 0xffffffff ) )
     }
 
+    is_uint32(): boolean
+    {
+        return UInt64.is_uint32( this );
+    }
+
     to_bytes(): Buffer
     {
         return this._bytes;
@@ -224,8 +229,18 @@ class UInt64
         return this._bytes.readUInt32BE( 4 );
     }
 
+    to_int32(): number
+    {
+        return this.isNegative ? - ( this.to_uint32() + 1) : this.to_uint32();
+    }
+
     to_uint16(): number
     {
         return this._bytes.readUInt32BE( 6 );
+    }
+
+    to_int16(): number
+    {
+        return this.isNegative ? - ( this.to_uint16() + 1) : this.to_uint16();
     }
 }

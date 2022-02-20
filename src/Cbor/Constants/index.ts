@@ -100,7 +100,7 @@ export enum Tag_addInfos {
     base64_url          = 33 | 0,
     base64              = 34 | 0,
     regexp              = 35 | 0,
-    MIME                = 36 | 0,
+    MIME                = 36 | 0, // https://datatracker.ietf.org/doc/html/rfc2045
     self_cbor           = 55799 | 0
 }
 
@@ -209,6 +209,47 @@ class AddInfos
         expect_uint64_length   : Map_addInfos
         make_infinite          : Map_addInfos
     }> = commonEnum;
+
+
+    static Tag: Readonly<{
+        utf8_string         : number,
+        epoch_datetime      : number,
+        positive_bignum     : number,
+        negative_bignum     : number,
+        decimal_frac_array  : number,
+        bigfloat            : number,
+        first_unassigned    : number,
+        expect_base64_url   : number,
+        expect_base64       : number,
+        expect_base16       : number,
+        sub_cbor            : number,
+        second_unassigned   : number,
+        uri                 : number,
+        base64_url          : number,
+        base64              : number,
+        regexp              : number,
+        MIME                : number, // https://datatracker.ietf.org/doc/html/rfc2045
+        self_cbor           : number
+    }> = {
+        utf8_string         : 0  | 0,
+        epoch_datetime      : 1  | 0,
+        positive_bignum     : 2  | 0,
+        negative_bignum     : 3  | 0,
+        decimal_frac_array  : 4  | 0,
+        bigfloat            : 5  | 0,
+        first_unassigned    : 20 | 0, // 6 to 20
+        expect_base64_url   : 21 | 0,
+        expect_base64       : 22 | 0,
+        expect_base16       : 23 | 0,
+        sub_cbor            : 24 | 0,
+        second_unassigned   : 31 | 0, // 25 to 31
+        uri                 : 32 | 0,
+        base64_url          : 33 | 0,
+        base64              : 34 | 0,
+        regexp              : 35 | 0,
+        MIME                : 36 | 0, // https://datatracker.ietf.org/doc/html/rfc2045
+        self_cbor           : 55799 | 0
+    }
 }
 
 /**

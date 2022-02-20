@@ -1,12 +1,197 @@
 import BufferUtils from "../../utils/BufferUtils";
-import CborError from "../errors/JsonCborError.ts/CborError";
-import JsonCbor, { JsonCborKey, RawJsonCborBytes, RawJsonCborInt, RawJsonCborList, RawJsonCborMap, RawJsonCborString, RawJsonCborValue } from "../JsonCbor";
+import CborError from "../misc/errors/JsonCborError.ts/CborError";
+import JsonCbor, { JsonCborBytes, JsonCborInt, JsonCborKey, JsonCborList, JsonCborString, JsonCbor_float_or_simple, RawJsonCborBytes, RawJsonCborFloat, RawJsonCborInt, RawJsonCborList, RawJsonCborMap, RawJsonCborString, RawJsonCborTag, RawJsonCborValue } from "../JsonCbor";
 import UInt64 from "../types/UInt64";
 import CborString from "../types/HexString/CborString";
-import CborConstants, { AdditionalInformation, MajorType, MajorTypeAsUint8 } from "./Constants";
+import CborConstants, { AdditionalInformation, MajorType, MajorTypeAsUint8, Tag_addInfos } from "./Constants";
 import ObjectUtils from "../../utils/ObjectUtils";
 import shouldNeverGetHereError from "../../utils/error_creation/shouldNeverGetHereError";
 
+export interface TagHandlerInfos
+{
+    /**
+     * if ```true``` an object respecting the ```RawJsonCborTag```
+     * ```ts
+     * {
+     *  tag: number,
+     *  data: RawJsonCborValue
+     * }
+     * ```
+     *  is pushed
+     * 
+     * if ```false``` only the ```data``` is pushed
+     */
+    shouldKeepTag: boolean
+    /**
+     * if ```true``` keeps processing as normaly
+     * if ```false``` Cbor.parse throws an error and the process is stopped
+     */
+    isValidData: boolean,
+}
+export interface CborParseOptions
+{
+    tagHandler: ( rawTag: RawJsonCborTag ) => TagHandlerInfos
+}
+
+export const defaultParseOptions: Readonly<CborParseOptions> = Object.freeze({
+    /**
+     * implementation that follows the rfc7049 CBOR specification for tags parsing:
+     * https://datatracker.ietf.org/doc/html/rfc7049#section-2.4
+     * 
+     * @param {RawJsonCborTag} parsed_tag result of tag parsing from the CBOR bytes
+     * @returns {TagHandlerInfos} having 
+     *      - ```shouldKeepTag``` setted to ```true``` if it is a [the rfc7049 CBOR specification ](https://datatracker.ietf.org/doc/html/rfc7049#section-2.4) defined tag,```false``` otherwhise
+     *      - ```isValidData``` according to [the rfc7049 CBOR specification ](https://datatracker.ietf.org/doc/html/rfc7049#section-2.4) if the tag is defined, defaults to ```true``` (ignoring the tag) if the tag itself is not defined
+     */
+    tagHandler: ( { tag, data }: RawJsonCborTag ): TagHandlerInfos => {
+
+        const tag_addInfos = Cbor.Constants.AddInfos.Tag;
+        switch( tag )
+        {
+            case tag_addInfos.utf8_string       : // 0
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCborString.isValid( data as RawJsonCborString )
+                };
+            break;
+            case tag_addInfos.epoch_datetime    : // 1
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCborInt.isValid( data as RawJsonCborInt ) || JsonCbor_float_or_simple.isFloat( data as RawJsonCborFloat )
+                };
+            break;
+            case tag_addInfos.positive_bignum   : // 2
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCborBytes.isValid( data as RawJsonCborBytes )
+                };
+            break;
+            case tag_addInfos.negative_bignum   : // 3
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCborBytes.isValid( data as RawJsonCborBytes )
+                };
+            break;
+            case tag_addInfos.decimal_frac_array: // 4
+                const _list = ( data as RawJsonCborList ).list as RawJsonCborInt[];
+                return {
+                    shouldKeepTag: true,
+                    isValidData: (
+                        JsonCborList.isValid( data as RawJsonCborList ) &&
+                        _list.length === 2   &&
+                        JsonCborInt.isValid( _list[0] ) && JsonCborInt.isValid( _list[1] )
+                    )
+                };
+            break;
+            case tag_addInfos.bigfloat          :
+                const list = ( data as RawJsonCborList ).list as RawJsonCborInt[];
+                return {
+                    shouldKeepTag: true,
+                    isValidData: (
+                        JsonCborList.isValid( data as RawJsonCborList ) &&
+                        list.length === 2   &&
+                        JsonCborInt.isValid( list[0] ) && JsonCborInt.isValid( list[1] )
+                    )
+                };
+            break;
+            /*
+            case tag_addInfos.first_unassigned  :
+                return {
+                    shouldKeepTag: true,
+                    isValidData:
+                };
+            //*/
+            break;
+            case tag_addInfos.expect_base64_url : // 21
+            //    return {
+            //        shouldKeepTag: true,
+            //        isValidData:
+            //    };
+            //break;
+            case tag_addInfos.expect_base64     : // 22
+            //    return {
+            //        shouldKeepTag: true,
+            //        isValidData:
+            //    };
+            //break;
+            case tag_addInfos.expect_base16     : // 23
+            //    return {
+            //        shouldKeepTag: true,
+            //        isValidData:
+            //    };
+
+            /*
+                https://datatracker.ietf.org/doc/html/rfc7049#section-2.4.4.2
+
+                The data item tagged can be a byte string or any other data item.  In
+                the latter case, the tag applies to all of the byte string data items
+                contained in the data item, except for those contained in a nested
+                data item tagged with an expected conversion.
+             */
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCbor.isValid( data )
+                };
+            break;
+            case tag_addInfos.sub_cbor          : // 24
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCborBytes.isValid( data as RawJsonCborBytes )
+                };
+            break;
+            /*
+            case tag_addInfos.second_unassigned :
+                return {
+                    shouldKeepTag: true,
+                    isValidData:
+                };
+            break;
+            //*/
+            case tag_addInfos.uri               :
+            //    return {
+            //        shouldKeepTag: true,
+            //        isValidData:
+            //    };
+            //break;
+            case tag_addInfos.base64_url        :
+            //    return {
+            //        shouldKeepTag: true,
+            //        isValidData:
+            //    };
+            //break;
+            case tag_addInfos.base64            :
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCbor.isValid( data )
+                };
+            break;
+            case tag_addInfos.regexp            :
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCborString.isValid( data as RawJsonCborString )
+                };
+            break;
+            case tag_addInfos.MIME              :  // https://datatracker.ietf.org/doc/html/rfc2045
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCbor.isValid( data )
+                };
+            break;
+            case tag_addInfos.self_cbor         :
+                return {
+                    shouldKeepTag: true,
+                    isValidData: JsonCborBytes.isValid( data as RawJsonCborBytes )
+                };
+            break;
+
+            default:
+                return {
+                    shouldKeepTag: false, // ignores the tag by default on non standard tags
+                    isValidData: JsonCbor.isValid( data )
+                };
+        }
+    }
+});
 
 interface SubParsedJson
 {
@@ -43,9 +228,24 @@ export default class Cbor
         return (n & Cbor.Constants.AdditionalInfosMask);
     }
 
+    //TODO floats
     static fromJsonCbor( jsonCbor: JsonCbor | RawJsonCborValue ): CborString
     {
         const rawJson = jsonCbor instanceof JsonCbor ? jsonCbor.toRawObject() : jsonCbor;
+
+        // if tag json_cbor
+        if( ObjectUtils.has_n_determined_keys( rawJson, 2, "tag", "data" ) )
+        {
+            const { tag, data } = (rawJson as RawJsonCborTag);
+
+            const tagBuff = Buffer.from( Cbor.fromJsonCbor({ int: tag }).asBytes );
+            tagBuff.writeUInt8( // just change the majortype
+                MajorTypeAsUint8.tag | Cbor.getAdditionalInfos( tagBuff.readUInt8(0) ) ,
+                0 // offset 0, first byte
+            )
+
+            return new CborString( tagBuff.toString("hex") + Cbor.fromJsonCbor( data ).asString );
+        }
 
         if( !ObjectUtils.hasUniqueKey( rawJson ) )
         {
@@ -96,7 +296,11 @@ export default class Cbor
                     )
                 );
             break;
-            
+            case "tag":
+            case "data":
+                throw new CborError("trying to creat Cbor form JsonCbor using an invalid tag instance,"+
+                "\nraw instance should respect the schema : \"{ tag: number, dat: RawJsonCborValue },\""+
+                "\ninstead was: "+JSON.stringify( rawJson ) )
             default:
                 throw shouldNeverGetHereError<CborError>( "Cbor.fromJsonCbor" );
         }
@@ -182,7 +386,7 @@ export default class Cbor
         const addInfo_consts = Cbor.Constants.AddInfos.Negative;
 
         if(
-            int instanceof UInt64
+            int instanceof UInt64 && !int.is_uint32()
         )
         {
             const buff = Buffer.alloc(9);
@@ -197,10 +401,14 @@ export default class Cbor
 
             return new CborString( buff.toString("hex") );
         }
+        else if( int instanceof UInt64 && int.is_uint32() )
+        {
+            int = int.to_int32();
+        }
 
         // if positive stays positive, if negative takes the complementar
         // ... as in real life, be positive guys
-        const unsigned_num = int >= 0 ? int : (-int) - 1;
+        const unsigned_num = (int as number) >= 0 ? (int  as number) : ( -(int  as number) ) - 1 ;
 
         if( unsigned_num <= 23 )
         {
@@ -294,8 +502,9 @@ export default class Cbor
         }
     }
 
+    static defaultParseOptions = defaultParseOptions;
 
-    static parse(cbor: CborString | string | Buffer): JsonCbor
+    static parse(cbor: CborString | string | Buffer, options?: CborParseOptions): JsonCbor
     {
         if (typeof cbor === "string") {
             cbor = new CborString(cbor);
@@ -308,12 +517,17 @@ export default class Cbor
         }
 
         // private method allows to pass information using recursion
-        const rawParsed = Cbor._parse( bytes );
+        const rawParsed = Cbor._parse(
+            bytes ,
+            Object.freeze({
+                ...defaultParseOptions,
+                ...options
+            }));
 
         return new JsonCbor( rawParsed.parsed );
     }
     
-    private static _parse( bytes: Buffer )
+    private static _parse( bytes: Buffer, options: Readonly<CborParseOptions> )
         : {
             top_level_header: MajorType,
             parsed: RawJsonCborValue,
@@ -321,217 +535,270 @@ export default class Cbor
             headers_tot_len: number,
         }
     {
-        let i = 0;
+        //let i = 0;
         //for (let i = 0; i < bytes.length; i++)
         //{
-            const header_byte = bytes.readUInt8(i);
+        const header_byte = bytes.readUInt8( 0 );
 
-            const major_t = Cbor.getMajorType(header_byte);
-            const addInfos = Cbor.getAdditionalInfos(header_byte);
+        const major_t = Cbor.getMajorType(header_byte);
+        const addInfos = Cbor.getAdditionalInfos(header_byte);
 
-            switch (major_t)
-            {
-                case MajorType.unsigned:
-                    /*
-                        https://datatracker.ietf.org/doc/html/rfc7049#section-3.9
+        switch (major_t)
+        {
+            case MajorType.unsigned:
+                /*
+                    https://datatracker.ietf.org/doc/html/rfc7049#section-3.9
 
-                        0 to 23 and -1 to -24 must be expressed in the same byte as the
-                        major type
-                    */
-                    if (addInfos < Cbor.Constants.AddInfos.Unsigned.expect_uint8) {
-                        // discrads the rest if any
+                    0 to 23 and -1 to -24 must be expressed in the same byte as the
+                    major type
+                */
+                if (addInfos < Cbor.Constants.AddInfos.Unsigned.expect_uint8) {
+                    // discrads the rest if any
+                    return {
+                        top_level_header: major_t,
+                        parsed: { int: addInfos },
+                        msg_len: 0,
+                        headers_tot_len: 1
+                    };
+                }
+
+                const unsign = Cbor.Constants.AddInfos.Unsigned;
+
+                switch (addInfos)
+                {
+                    case unsign.expect_uint8:
+                        // takes the next byte and discards the rest if any
                         return {
                             top_level_header: major_t,
-                            parsed: { int: addInfos },
-                            msg_len: 0,
+                            parsed: { int: bytes.readUInt8( 1 ) },
+                            msg_len: 1,
                             headers_tot_len: 1
                         };
-                    }
-
-                    const unsign = Cbor.Constants.AddInfos.Unsigned;
-
-                    switch (addInfos)
-                    {
-                        case unsign.expect_uint8:
-                            // takes the next byte and discards the rest if any
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: bytes.readUInt8(i + 1) },
-                                msg_len: 1,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case unsign.expect_uint16:
-                            // takes the next 2 bytes and discards the rest if any
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: bytes.readUInt16BE(i + 1) },
-                                msg_len: 2,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case unsign.expect_uint32:
-                            // takes the next 4 bytes and discards the rest if any
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: bytes.readUInt32BE(i + 1) },
-                                msg_len: 4,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case unsign.expect_uint64:
-                            // takes the next 8 bytes and discards the rest if any
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: UInt64.fromBytes( bytes,  i + 1 ) },
-                                msg_len: 8,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case unsign.unknown:
-                        default:
-                            throw new CborError("can't handle additional information " + addInfos + " for major type unsigned ( 0b000_xxxxx ) ");
-                    }
-
                     break;
-                case MajorType.negative:
-                    /*
-                        https://datatracker.ietf.org/doc/html/rfc7049#section-3.9
-
-                        0 to 23 and -1 to -24 must be expressed in the same byte as the
-                        major type
-                    */
-                    if (addInfos <= 23) {
+                    case unsign.expect_uint16:
+                        // takes the next 2 bytes and discards the rest if any
                         return {
                             top_level_header: major_t,
-                            parsed: { int: -addInfos - 1 },
-                            msg_len: 0,
+                            parsed: { int: bytes.readUInt16BE( 1 ) },
+                            msg_len: 2,
                             headers_tot_len: 1
                         };
-                    }
-
-                    const neg = Cbor.Constants.AddInfos.Negative;
-
-                    switch (addInfos) {
-                        case neg.expect_uint8:
-                            // takes the next byte and discards the rest if any
-                            if(i + 1 >= bytes.length) throw new CborError("unexpected end of input, need at least one more byte")
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: - bytes.readUInt8(i + 1) - 1 },
-                                msg_len: 1,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case neg.expect_uint16:
-                            // takes the next 2 bytes and discards the rest if any
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: -bytes.readUInt16BE(i + 1) - 1 },
-                                msg_len: 2,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case neg.expect_uint32:
-                            // takes the next 4 bytes and discards the rest if any
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: -bytes.readUInt32BE(i + 1) - 1 },
-                                msg_len: 4,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case neg.expect_uint64:
-                            // takes the next 8 bytes and discards the rest if any
-
-                            // bytes taken "as is" and marked as negative
-                            const asNegative = UInt64.fromBytes( bytes,  i + 1 );
-                            asNegative.dangerouslySetNegativeFlag( true );
-
-                            return {
-                                top_level_header: major_t,
-                                parsed: { int: asNegative },
-                                msg_len: 8,
-                                headers_tot_len: 1
-                            };
-                        break;
-                        case neg.unknown:
-                        default:
-                            throw new CborError("can't handle additional information " + addInfos + " for major type unsigned ( 0b001_xxxxx ) ");
-                    }
+                    break;
+                    case unsign.expect_uint32:
+                        // takes the next 4 bytes and discards the rest if any
+                        return {
+                            top_level_header: major_t,
+                            parsed: { int: bytes.readUInt32BE( 1 ) },
+                            msg_len: 4,
+                            headers_tot_len: 1
+                        };
+                    break;
+                    case unsign.expect_uint64:
+                        // takes the next 8 bytes and discards the rest if any
+                        return {
+                            top_level_header: major_t,
+                            parsed: { int: UInt64.fromBytes( bytes, 1 ) },
+                            msg_len: 8,
+                            headers_tot_len: 1
+                        };
+                    break;
+                    case unsign.unknown:
+                    default:
+                        throw new CborError("can't handle additional information " + addInfos + " for major type unsigned ( 0b000_xxxxx ) ");
+                }
 
                 break;
-                case MajorType.bytes:
+            case MajorType.negative:
+                /*
+                    https://datatracker.ietf.org/doc/html/rfc7049#section-3.9
 
-                    const parsedBytes = Cbor._parseBytes(
-                        BufferUtils.copy(
-                            bytes.slice( i )
-                        )
-                    );
-
+                    0 to 23 and -1 to -24 must be expressed in the same byte as the
+                    major type
+                */
+                if (addInfos <= 23) {
                     return {
                         top_level_header: major_t,
-                        parsed: { bytes: parsedBytes.bytes },
-                        msg_len: parsedBytes.msgLen,
-                        headers_tot_len: parsedBytes.headerTotLen
-                    }
-
-                break;
-                case MajorType.text:
-                    const parsedText = Cbor._parseText(
-                        BufferUtils.copy(
-                            bytes.slice( i )
-                        )
-                    );
-
-                    return {
-                        top_level_header: major_t,
-                        parsed: { string: parsedText.text },
-                        msg_len: Number( parsedText.msg_len ),
-                        headers_tot_len: parsedText.headers_tot_len
+                        parsed: { int: -addInfos - 1 },
+                        msg_len: 0,
+                        headers_tot_len: 1
                     };
-                    
-                break;
-                case MajorType.array:
-                    const parsedArr = Cbor._parseArr( bytes );
+                }
 
-                    return {
-                        top_level_header: major_t,
-                        parsed: { list: parsedArr.array },
-                        msg_len: parsedArr.msgLen,
-                        headers_tot_len: parsedArr.headerTotLen
-                    }
+                const neg = Cbor.Constants.AddInfos.Negative;
 
-                break;
-                case MajorType.map:
+                switch (addInfos) {
+                    case neg.expect_uint8:
+                        // takes the next byte and discards the rest if any
+                        if( 1 >= bytes.length) throw new CborError("unexpected end of input, need at least one more byte")
+                        return {
+                            top_level_header: major_t,
+                            parsed: { int: - bytes.readUInt8( 1 ) - 1 },
+                            msg_len: 1,
+                            headers_tot_len: 1
+                        };
+                    break;
+                    case neg.expect_uint16:
+                        // takes the next 2 bytes and discards the rest if any
+                        return {
+                            top_level_header: major_t,
+                            parsed: { int: -bytes.readUInt16BE( 1 ) - 1 },
+                            msg_len: 2,
+                            headers_tot_len: 1
+                        };
+                    break;
+                    case neg.expect_uint32:
+                        // takes the next 4 bytes and discards the rest if any
+                        return {
+                            top_level_header: major_t,
+                            parsed: { int: -bytes.readUInt32BE( 1 ) - 1 },
+                            msg_len: 4,
+                            headers_tot_len: 1
+                        };
+                    break;
+                    case neg.expect_uint64:
+                        // takes the next 8 bytes and discards the rest if any
 
-                    const parsedMap = Cbor._parseMap(
-                        BufferUtils.copy(
-                            bytes
+                        // bytes taken "as is" and marked as negative
+                        const asNegative = UInt64.fromBytes( bytes, 1 );
+                        asNegative.dangerouslySetNegativeFlag( true );
+
+                        return {
+                            top_level_header: major_t,
+                            parsed: { int: asNegative },
+                            msg_len: 8,
+                            headers_tot_len: 1
+                        };
+                    break;
+                    case neg.unknown:
+                    default:
+                        throw new CborError("can't handle additional information " + addInfos + " for major type unsigned ( 0b001_xxxxx ) ");
+                }
+
+            break;
+            case MajorType.bytes:
+
+                const parsedBytes = Cbor._parseBytes(
+                    BufferUtils.copy(
+                        bytes.slice( 0 )
+                    )
+                );
+
+                return {
+                    top_level_header: major_t,
+                    parsed: { bytes: parsedBytes.bytes },
+                    msg_len: parsedBytes.msgLen,
+                    headers_tot_len: parsedBytes.headerTotLen
+                }
+
+            break;
+            case MajorType.text:
+                const parsedText = Cbor._parseText(
+                    BufferUtils.copy(
+                        bytes.slice( 0 )
+                    )
+                );
+
+                return {
+                    top_level_header: major_t,
+                    parsed: { string: parsedText.text },
+                    msg_len: Number( parsedText.msg_len ),
+                    headers_tot_len: parsedText.headers_tot_len
+                };
+                
+            break;
+            case MajorType.array:
+                const parsedArr = Cbor._parseArr( bytes, options );
+
+                return {
+                    top_level_header: major_t,
+                    parsed: { list: parsedArr.array },
+                    msg_len: parsedArr.msgLen,
+                    headers_tot_len: parsedArr.headerTotLen
+                }
+
+            break;
+            case MajorType.map:
+
+                const parsedMap = Cbor._parseMap(
+                    BufferUtils.copy(
+                        bytes
+                    ),
+                    options
+                );
+
+                return {
+                    top_level_header: major_t,
+                    parsed: { map: parsedMap.map },
+                    msg_len: parsedMap.msg_len,
+                    headers_tot_len: parsedMap.headers_tot_len
+                };
+
+            break;
+            case MajorType.tag:
+
+                const cpyBuffer = BufferUtils.copy( bytes );
+                cpyBuffer.writeUInt8( MajorType.unsigned | addInfos ); // parse as unsigned
+
+                const parsedTagNum = Cbor._parse(
+                    cpyBuffer,
+                    options
+                );
+
+                const parsedData = Cbor._parse(
+                    BufferUtils.copy(
+                        bytes.subarray(
+                            parsedTagNum.msg_len + parsedTagNum.headers_tot_len
                         )
-                    );
+                    ),
+                    options
+                );
 
+                const rawTag : RawJsonCborTag = { 
+                    tag: (parsedTagNum.parsed as RawJsonCborInt).int,
+                    data: parsedData.parsed
+                };
+
+                const { shouldKeepTag, isValidData } = options.tagHandler( rawTag );
+
+                if( !isValidData ) throw new CborError(
+                    `failed parsing a tag value; data did not matched the required type for the tag;`+
+                    `\ntag was: ${rawTag.tag};`+
+                    `\ndata was: ${JSON.stringify(parsedData.parsed)}`
+                );
+
+                const tot_msg_len: number | UInt64 = parsedTagNum.msg_len + parsedData.msg_len;
+                const tot_header_tot_len: number = parsedTagNum.headers_tot_len + parsedData.headers_tot_len
+                
+                if( shouldKeepTag )
+                {
                     return {
-                        top_level_header: major_t,
-                        parsed: { map: parsedMap.map },
-                        msg_len: parsedMap.msg_len,
-                        headers_tot_len: parsedMap.headers_tot_len
+                        top_level_header: major_t ,
+                        parsed: rawTag ,
+                        msg_len: tot_msg_len,
+                        headers_tot_len: tot_header_tot_len
                     };
+                }
+                else
+                {
+                    return {
+                        top_level_header: parsedData.top_level_header,
+                        parsed: parsedData.parsed,
+                        msg_len: tot_msg_len,
+                        headers_tot_len: tot_header_tot_len
+                    }
+                }
+            
+            break;
+            case MajorType.float_or_simple:
+                throw new CborError("float parsing not supported at the moment");
+            break;
 
-                break;
-                case MajorType.tag:
-                    throw new CborError("tag parsing not supported at the moment");
-                break;
-                case MajorType.float_or_simple:
-                    throw new CborError("float parsing not supported at the moment");
-                break;
-
-                default: throw new CborError("undefined major type while parsing");
-            }
+            default: throw new CborError("undefined major type while parsing");
+        }
 
         //}
 
-        throw new CborError("unexpected flow execution while parsing: Cbor._parse sholud return befor the loops ends")
+        throw shouldNeverGetHereError<CborError>("Cbor._parse");
     }
 
 
@@ -934,7 +1201,7 @@ export default class Cbor
         }
     }
 
-    private static _parseArr(bytes: Buffer)
+    private static _parseArr(bytes: Buffer, options: Readonly<CborParseOptions> )
         : {
             array: RawJsonCborValue[],
             msgLen: number,
@@ -994,7 +1261,8 @@ export default class Cbor
                 const parsed = Cbor._parse(
                     BufferUtils.copy(
                         bytes.slice( elem_ptr )
-                    )
+                    ),
+                    options
                 )
 
                 arr.push(
@@ -1073,7 +1341,8 @@ export default class Cbor
                     const parsed = Cbor._parse(
                         BufferUtils.copy(
                             bytes.slice( byte_ptr )
-                        )
+                        ),
+                        options
                     )
 
                     arr.push(
@@ -1103,7 +1372,7 @@ export default class Cbor
 
     }
 
-    private static _parseMap(bytes: Buffer)
+    private static _parseMap(bytes: Buffer, options: Readonly<CborParseOptions> )
         : {
             map: RawMapPair[],
             msg_len: number,
@@ -1168,7 +1437,8 @@ export default class Cbor
                 const parsedKey = Cbor._parse(
                     BufferUtils.copy(
                         bytes.slice( elem_ptr )
-                    )
+                    ),
+                    options
                 )
                 
                 totHeadersLen += parsedKey.headers_tot_len;
@@ -1179,7 +1449,8 @@ export default class Cbor
                 const parsedValue = Cbor._parse(
                     BufferUtils.copy(
                         bytes.slice( elem_ptr )
-                    )
+                    ),
+                    options
                 );
 
                 totHeadersLen += parsedValue.headers_tot_len;
@@ -1256,7 +1527,8 @@ export default class Cbor
                     const parsedKey = Cbor._parse(
                         BufferUtils.copy(
                             bytes.slice( byte_ptr )
-                        )
+                        ),
+                        options
                     )
 
                     totHeadersLen += parsedKey.headers_tot_len;
@@ -1267,7 +1539,8 @@ export default class Cbor
                     const parsedValue = Cbor._parse(
                         BufferUtils.copy(
                             bytes.slice( byte_ptr )
-                        )
+                        ),
+                        options
                     );
     
                     totHeadersLen += parsedValue.headers_tot_len;

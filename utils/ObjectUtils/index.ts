@@ -53,6 +53,15 @@ export default class ObjectUtils
         return true
     }
 
+    static has_n_determined_keys( obj: object, n : number, ...keys: string[] ): boolean
+    {
+        return (
+            ObjectUtils.hasNkeys( obj , n )             &&
+            keys.length === n                           &&
+            ObjectUtils.containsKeys( obj, ...keys )  
+        );
+    }
+
 
     static isSerializable( obj: object ): boolean
     {

@@ -1,4 +1,4 @@
-import CborString from "../../types/HexString/CborString";
+import CborString from "../../../types/HexString/CborString";
 
 export default interface ICborOverwritable
 {

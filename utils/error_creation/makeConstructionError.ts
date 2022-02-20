@@ -1,4 +1,4 @@
-import BaseJsonCborError from "../../src/errors/BaseJsonCborError";
+import BaseJsonCborError from "../../src/misc/errors/BaseJsonCborError";
 
 export default function makeConstructionError< ErrorType extends BaseJsonCborError = BaseJsonCborError >
 ( 

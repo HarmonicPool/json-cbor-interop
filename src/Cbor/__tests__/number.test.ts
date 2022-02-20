@@ -1,5 +1,6 @@
 import Cbor from ".."
 import CborString from "../../types/HexString/CborString";
+import UInt64 from "../../types/UInt64";
 
 
 test("one bytes unsigned parsed normally", () =>
@@ -78,10 +79,11 @@ test("negative uint32 parsed normaly", () =>
 
 test("positive uint64 parsed normaly", () =>
 {
-    expect(false).toBe(true);
+    expect( Cbor.fromJsonCbor( { int: UInt64.fromBigInt( BigInt(3) ) } ).asString ).toBe("03");
+    expect( Cbor.fromJsonCbor( { int: UInt64.fromBigInt( BigInt( 8589934592 ) ) } ).asString ).toBe("1b0000000200000000")
 });
 
 test("negative uint64 parsed normaly", () =>
 {
-    expect(false).toBe(true);
+    expect( Cbor.fromJsonCbor( { int: UInt64.fromBigInt( -BigInt(7) ) } ).asString ).toBe("26");
 })

@@ -1,23 +1,26 @@
-import ISerializable from "../interfaces/ISerializable";
-import IJsonValueConvertible from "../interfaces/JsonInterfaces/IJsonValueConvertible";
-import RawJsonValue from "../interfaces/JsonInterfaces/RawJsonValue";
+import ISerializable from "../misc/interfaces/ISerializable";
+import IJsonValueConvertible from "../misc/interfaces/JsonInterfaces/IJsonValueConvertible";
+import RawJsonValue from "../misc/interfaces/JsonInterfaces/RawJsonValue";
 
 import HexString from "../types/HexString";
 import ObjectUtils from "../../utils/ObjectUtils";
 
-import JsonCborError from "../errors/JsonCborError.ts";
+import JsonCborError from "../misc/errors/JsonCborError.ts";
 import makeConstructionError from "../../utils/error_creation/makeConstructionError";
 import shouldNeverGetHereError from "../../utils/error_creation/shouldNeverGetHereError";
-import Cbor from "../Cbor";
+import Cbor, { CborParseOptions } from "../Cbor";
 import CborString from "../types/HexString/CborString";
 import UInt64 from "../types/UInt64";
+import ICborConvertible from "../misc/interfaces/CborInterfaces/ICborConvertible";
 
 export type JsonCborKey = 
 "string"    |
 "list"      |
 "map"       |
 "int"       |
-"bytes"
+"bytes"     |
+"tag"       |
+"data"      
 ;
 
 export type JsonCborValue =
@@ -25,7 +28,9 @@ export type JsonCborValue =
     JsonCborList    |
     JsonCborString  |
     JsonCborInt     |
-    JsonCborBytes
+    JsonCborBytes   |
+    JsonCborTag     |
+    JsonCbor_float_or_simple
 ;
 
 export type RawJsonCborValue =
@@ -33,9 +38,15 @@ export type RawJsonCborValue =
     RawJsonCborList     |
     RawJsonCborString   |
     RawJsonCborInt      |
-    RawJsonCborBytes
+    RawJsonCborBytes    |
+    RawJsonCborTag      |
+    RawJsonCbor_float_or_simple
 ;
 
+export interface FromJsonValueOptions
+{
+    stringHandler: ( str: string ) => RawJsonCborValue 
+}
 
 export default
 class JsonCbor 
@@ -56,6 +67,16 @@ class JsonCbor
     toRawObject(): RawJsonCborValue
     {
         const oKeys = Object.keys( this._obj );
+
+        if(
+            ObjectUtils.has_n_determined_keys( this._obj, 2, "tag", "data" ) &&
+            JsonCbor.isValidValueForKey( "tag", (this._obj as RawJsonCborTag ).tag ) &&
+            JsonCbor.isValidValueForKey( "data", (this._obj as RawJsonCborTag ).data )
+        )
+        {
+            return new JsonCborTag( this._obj as RawJsonCborTag ).toRawObject()
+        }
+
         if(!(
             ObjectUtils.hasUniqueKey( this._obj ) &&
             JsonCbor.isValidKey( oKeys[0] )
@@ -76,14 +97,161 @@ class JsonCbor
         }
     }
 
-    static fromCbor( cbor : CborString | string | Buffer ): JsonCbor
+    static fromCbor( cbor : CborString | string | Buffer, options?: CborParseOptions ): JsonCbor
     {
-        return Cbor.parse( cbor );
+        return Cbor.parse( cbor, options );
     }
 
     toCbor(): CborString
     {
         return Cbor.fromJsonCbor( this );
+    }
+
+    static utils_FromJsonValueOptions = Object.freeze({
+        intStringHandler: (
+            str: string,
+            {stringHandler}: FromJsonValueOptions
+                = JsonCbor.defaultFromJsonValueOpts
+        ) => {
+            if( // checks if it can be converted to a number
+                
+                str.split("") // gets an array of char
+                .every( 
+                    // for each char checks if it is a number
+                    ch => "0987654321".includes(ch) 
+                    // returns true if it is in fact a number
+                    // returns false if not       
+                )
+            )
+            {
+                const uint64 = UInt64.fromBigInt( BigInt(str) );
+                
+                return (
+                    uint64.is_uint32() ? // tries to reduce the size if it can
+                    { int: uint64.to_uint32() }:
+                    { int: uint64 }
+                )
+            }
+
+            return stringHandler( str );
+        }
+    })
+
+    static defaultFromJsonValueOpts: Readonly<FromJsonValueOptions> = Object.freeze(
+    {
+        stringHandler: ( str: string ): RawJsonCborValue =>
+        {
+            if( HexString.isHex(str) ) // prefers bytes
+            {
+                return { bytes: str };
+            }
+        /* actually useless as it will becoverd from Hex case
+
+            else if( // checks if it can be converted to a number
+                
+                str.split("") // gets an array of char
+                .map( 
+                    // for each char checks if it is a number
+                    ch => "0987654321".includes(ch) 
+                    // returns true if it is in fact a number
+                    // returns false if not        
+                )
+                .reduce( (bool1, bool2) => bool1 && bool2, true ) // && (AND) them all
+            )
+            {
+                const uint64 = UInt64.fromBigInt( BigInt(str) );
+                
+                return (
+                    uint64.is_uint32() ? // tries to reduce the size if it can
+                    { int: uint64.to_uint32() }:
+                    { int: uint64 }
+                )
+            }
+
+        //*/
+
+            // in the last case returns it as utf8 text
+            return{
+                string: str
+            };
+        }
+    })
+
+    static fromJsonValue(
+        jsonValue: RawJsonValue,
+        options?: FromJsonValueOptions
+    ): JsonCbor
+    {
+        const opt: FromJsonValueOptions = {
+            ...JsonCbor.defaultFromJsonValueOpts,
+            ...options
+        };
+
+        if(typeof jsonValue === "number" )
+        {
+            return new JsonCbor({
+                int: jsonValue
+            });
+        }
+        else if( typeof jsonValue === "string" )
+        {
+            return new JsonCbor(opt.stringHandler( jsonValue ) );
+        }
+        // else object
+
+        if( Array.isArray( jsonValue ))
+        {
+            return new JsonCbor({
+                list: jsonValue.map( elem => JsonCbor.fromJsonValue(elem, opt).toRawObject() )
+            })
+        }
+        
+        // object
+        const oKeys = Object.keys( jsonValue );
+        const jsonCborMap: RawJsonCborMapPair[] = [];
+
+        for( let i = 0; i < oKeys.length; i++ )
+        {
+            let rawKey: RawJsonCborValue;
+            try
+            {
+                // if the JsonValue has beengenerated from a CBOR
+                // the key could be anything
+                // and we would like to preserve that
+                const parsedKey = JSON.parse( oKeys[i] );
+
+                if( typeof parsedKey === "number" )
+                {
+                    const uint64 = UInt64.fromBigInt( BigInt(parsedKey) )
+                    rawKey = { int: uint64.is_uint32() ? uint64.to_int32() : uint64 }
+                }
+                else // list or map
+                {
+                    rawKey = JsonCbor.fromJsonValue( parsedKey ).toRawObject();
+                }
+            }
+            catch (e)
+            {
+                if( e instanceof SyntaxError )
+                {
+                    // bytes or string
+
+                    // key was a valid string, (but not a number)
+                    // therefore it can be interpreted as bytes or strings
+                    rawKey = opt.stringHandler( oKeys[i] );
+                }
+                else throw e;
+            }
+
+            jsonCborMap.push({
+                k: rawKey,
+                v: JsonCbor.fromJsonValue( (jsonValue as any)[ oKeys[i] ]).toRawObject()
+            });
+        }
+
+        return new JsonCbor({
+            map: jsonCborMap
+        })
     }
 
     toJsonValue(): RawJsonValue
@@ -109,9 +277,21 @@ class JsonCbor
         }
     }
 
+    // TODO updateto floats and tags and simple
+    // TODO update keys
+    // TODO update values
     static isValid( obj: object ): boolean
     {
         const keys = Object.keys( obj );
+
+        if(
+            ObjectUtils.has_n_determined_keys( obj, 2, "tag", "data" ) &&
+            JsonCbor.isValidValueForKey( "tag", (obj as RawJsonCborTag ).tag ) &&
+            JsonCbor.isValidValueForKey( "data", (obj as RawJsonCborTag ).data )
+        )
+        {
+            return true;
+        }
 
         return (
             ObjectUtils.hasUniqueKey( obj ) &&
@@ -120,6 +300,7 @@ class JsonCbor
         )
     }
 
+    // TODO updateto floats and tags and simple
     static isValidKey( key: string ): boolean
     {
         return (
@@ -127,19 +308,27 @@ class JsonCbor
             key === "list"      ||
             key === "map"       ||
             key === "int"       ||
-            key === "bytes"
+            key === "bytes"     ||
+            key === "tag"       ||
+            key === "data"
         )
     }
 
-    static isValidValueForKey( key: JsonCborKey, value: RawJsonCborValue ): boolean
+    // TODO updateto floats and tags and simple
+    static isValidValueForKey( key: JsonCborKey, value: any ): boolean
     {
         switch( key )
         {
             case "bytes"    :   return ( typeof value === "string" && JsonCborBytes.isValidValue( value ) );
-            case "int"      :   return ( typeof value === "number" && JsonCborInt.isValidValue( value ) );
+            case "int"      :   return (
+                    (typeof value === "number" || value instanceof UInt64 ) &&
+                    JsonCborInt.isValidValue( value )
+                );
             case "list"     :   return ( Array.isArray( value ) && JsonCborList.isValidValue( value ) );
             case "map"      :   return JsonCborMap.isValidValue( value );
             case "string"   :   return ( typeof value === "string" && JsonCborString.isValidValue( value ) );
+            case "tag"      :   return JsonCborInt.isValidValue( value )
+            case "data"     :   return JsonCbor.isValid( value );
         }
     }
 
@@ -217,8 +406,13 @@ export class JsonCborMap
         {
             let key = new JsonCbor( this._jsonCborMap.map[i].k ).toJsonValue();
 
+            // bytes and strings are valid keys without the need of stringify of course
             if( typeof key !== "string" )
             {
+                // are stringified
+                // list
+                // maps
+                // numbers
                 key = JSON.stringify( key );
             }
 
@@ -228,13 +422,17 @@ export class JsonCborMap
         return json;
     }
 
+    /**
+     * 
+     * @returns a copy of the raw map object
+     */
     toRawObject(): RawJsonCborValue
     {
         let mapArray: Array<RawJsonCborMapPair> = [];
 
         for( let i = 0; i < this._jsonCborMap.map.length; i++)
         {
-            mapArray.push({
+            mapArray.push({ 
                 k: new JsonCbor( this._jsonCborMap.map[i].k ).toRawObject(),
                 v: new JsonCbor( this._jsonCborMap.map[i].v ).toRawObject()
             });
@@ -294,7 +492,7 @@ export class JsonCborList
 
     toJsonValue(): object
     {
-        let arr: Array<string | number | object> = [];
+        let arr: Array<RawJsonValue> = [];
 
         for( let i = 0; i < this._jsonCborList.list.length; i++)
         {
@@ -491,5 +689,132 @@ export class JsonCborBytes
         return {
             bytes: this._rawBytes.bytes.asString
         };
+    }
+}
+
+
+export interface RawJsonCborTag
+{
+    tag: number | UInt64
+    data: RawJsonCborValue
+}
+export class JsonCborTag
+    implements ICborConvertible, IJsonValueConvertible, ISerializable
+{
+    private _tag: RawJsonCborTag;
+
+    constructor( tag: RawJsonCborTag )
+    {
+        if( !JsonCborTag.isValid( tag ) )
+        {
+            throw makeConstructionError<JsonCborError>(
+                "JsonCborTag constructor",
+                "{ tag : number }",
+                tag
+            )
+        }
+
+        this._tag = tag;
+    }
+
+    static isValid(tag: RawJsonCborTag): boolean
+    {
+        return ObjectUtils.has_n_determined_keys( tag, 2, "tag", "data" );
+    }
+
+    toRawObject(): RawJsonCborTag
+    {
+        return this._tag;
+    }
+
+    toJsonValue(): RawJsonValue
+    {
+        return new JsonCbor( this._tag.data ).toJsonValue();
+    }
+
+    toCbor(): CborString
+    {
+        return Cbor.fromJsonCbor( this.toRawObject() )
+    }
+}
+
+
+export interface RawJsonCborSimple
+{
+    simple: boolean | null | undefined
+}
+export interface RawJsonCborFloat
+{
+    float: number
+}
+export type RawJsonCbor_float_or_simple = RawJsonCborFloat | RawJsonCborSimple
+export class JsonCbor_float_or_simple
+    implements ICborConvertible, IJsonValueConvertible, ISerializable
+{
+    private _data: RawJsonCbor_float_or_simple;
+
+    constructor( rawData: RawJsonCbor_float_or_simple )
+    {
+        if( !JsonCbor_float_or_simple.isValid( rawData ) )
+        {
+            makeConstructionError<JsonCborError>(
+                "JsonCbor_float_or_simple constructor",
+                "{ float: number } or { simple: boolean | null | undefined }",
+                rawData
+            )
+        }
+
+        this._data = rawData;
+    }
+
+    static isValid( data: RawJsonCbor_float_or_simple )
+    {
+        return (
+            JsonCbor_float_or_simple.isFloat( data as RawJsonCborFloat ) || 
+            JsonCbor_float_or_simple.isSimple( data as RawJsonCborSimple )
+        );
+    }
+
+    static isFloat( data: RawJsonCborFloat ): boolean
+    {
+        return (
+            ObjectUtils.hasUniqueKey( data, "float" ) &&
+            typeof data.float === "number"
+        )
+    }
+
+    static isSimple( data: RawJsonCborSimple ): boolean
+    {
+        return (
+            ObjectUtils.hasUniqueKey( data, "simple" ) &&
+            (
+                typeof data.simple === "boolean" ||
+                typeof data.simple === "undefined" ||
+                data.simple === null || data.simple === undefined
+            )
+        )
+    }
+
+    toCbor(): CborString
+    {
+        return Cbor.fromJsonCbor( this._data );
+    }
+
+    toRawObject(): RawJsonCbor_float_or_simple
+    {
+        return this._data;
+    }
+
+    toJsonValue(): RawJsonValue
+    {
+        if( JsonCbor_float_or_simple.isFloat( this._data as RawJsonCborFloat ) )
+        {
+            return ( this._data as RawJsonCborFloat ).float;
+        }
+
+        if( JsonCbor_float_or_simple.isSimple( this._data as RawJsonCborSimple ) )
+        {
+            return ( this._data as RawJsonCborSimple ).simple
+        }
     }
 }
